@@ -50,9 +50,20 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            exec {
+            project.exec {
                 workingDir = projectDir
-                commandLine("gradle", "help", "--refresh-dependencies")
+
+                // Use wrapper if available, else fallback to gradle
+                val gradleCmd = if (File(projectDir, "gradlew").exists()) {
+                    if (System.getProperty("os.name").contains("Windows"))
+                        "gradlew.bat"
+                    else
+                        "./gradlew"
+                } else {
+                    "gradle"
+                }
+
+                commandLine(gradleCmd, "help", "--refresh-dependencies")
             }
         }
 
