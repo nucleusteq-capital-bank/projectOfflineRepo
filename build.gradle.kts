@@ -37,7 +37,7 @@ tasks.register("buildOfflineRepo") {
     doLast {
 
         println("========================================")
-        println("STEP 1: Resolve dependencies (FAST MODE)")
+        println("STEP 1: Resolve dependencies (SAFE MODE)")
         println("========================================")
 
         projectPaths.forEach { path ->
@@ -50,20 +50,29 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            project.exec {
-                workingDir = projectDir
+            val gradleCmd = if (File(projectDir, "gradlew").exists()) {
+                if (System.getProperty("os.name").contains("Windows"))
+                    "gradlew.bat"
+                else
+                    "./gradlew"
+            } else {
+                "gradle"
+            }
 
-                // Use wrapper if available, else fallback to gradle
-                val gradleCmd = if (File(projectDir, "gradlew").exists()) {
-                    if (System.getProperty("os.name").contains("Windows"))
-                        "gradlew.bat"
-                    else
-                        "./gradlew"
-                } else {
-                    "gradle"
-                }
+            //  FIX: use ProcessBuilder instead of exec
+            val process = ProcessBuilder(
+                gradleCmd,
+                "help",
+                "--refresh-dependencies"
+            )
+                .directory(projectDir)
+                .inheritIO()
+                .start()
 
-                commandLine(gradleCmd, "help", "--refresh-dependencies")
+            val exitCode = process.waitFor()
+
+            if (exitCode != 0) {
+                throw GradleException("Gradle failed for project: $path")
             }
         }
 
