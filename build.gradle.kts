@@ -40,8 +40,6 @@ tasks.register("buildOfflineRepo") {
         println("STEP 1: Resolve dependencies")
         println("========================================")
 
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-
         projectPaths.forEach { path ->
 
             val projectDir = file(path)
@@ -52,13 +50,8 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            val gradleCmd = when {
-                isWindows && File(projectDir, "gradlew.bat").exists() -> "gradlew.bat"
-                !isWindows && File(projectDir, "gradlew").exists() -> "./gradlew"
-                else -> "gradle"
-            }
-
-            println("Using command: $gradleCmd")
+            //  ALWAYS USE SYSTEM GRADLE
+            val gradleCmd = "gradle"
 
             val process = ProcessBuilder(
                 gradleCmd,
