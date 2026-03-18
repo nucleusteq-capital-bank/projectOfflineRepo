@@ -1,8 +1,6 @@
 import java.io.File
 import java.util.Properties
 
-// ---------------- LOAD PROJECT PATHS ----------------
-
 val props = Properties()
 file("projects.properties").inputStream().use { props.load(it) }
 
@@ -18,11 +16,7 @@ if (projectPaths.isEmpty()) {
 
 println("Projects loaded: $projectPaths")
 
-// ---------------- OUTPUT ----------------
-
 val repoDir = file("offline-repo")
-
-// ---------------- TASK ----------------
 
 tasks.register("buildOfflineRepo") {
 
@@ -35,6 +29,8 @@ tasks.register("buildOfflineRepo") {
         println("STEP 1: Resolve dependencies")
         println("========================================")
 
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+
         projectPaths.forEach { path ->
 
             val projectDir = file(path)
@@ -43,18 +39,38 @@ tasks.register("buildOfflineRepo") {
                 throw GradleException("Project path not found: $path")
             }
 
-            println("➡ Resolving: $path")
+            println("Resolving: $path")
 
-            val gradleCmd = "gradlew.bat"
+            val process = if (isWindows) {
+                val wrapper = File(projectDir, "gradlew.bat")
+                if (!wrapper.exists()) {
+                    throw GradleException("Missing gradlew.bat in: ${projectDir.absolutePath}")
+                }
 
-            val process = ProcessBuilder(
-                gradleCmd,
-                "help",
-                "--refresh-dependencies"
-            )
-                .directory(projectDir)
-                .inheritIO()
-                .start()
+                ProcessBuilder(
+                    "cmd", "/c",
+                    wrapper.absolutePath,
+                    "help",
+                    "--refresh-dependencies"
+                )
+                    .directory(projectDir)
+                    .inheritIO()
+                    .start()
+            } else {
+                val wrapper = File(projectDir, "gradlew")
+                if (!wrapper.exists()) {
+                    throw GradleException("Missing gradlew in: ${projectDir.absolutePath}")
+                }
+
+                ProcessBuilder(
+                    wrapper.absolutePath,
+                    "help",
+                    "--refresh-dependencies"
+                )
+                    .directory(projectDir)
+                    .inheritIO()
+                    .start()
+            }
 
             val exitCode = process.waitFor()
 
@@ -64,7 +80,7 @@ tasks.register("buildOfflineRepo") {
         }
 
         println("========================================")
-        println("STEP 2: Copy Gradle cache → offline repo")
+        println("STEP 2: Copy Gradle cache -> offline repo")
         println("========================================")
 
         val cacheRoot = File(System.getProperty("user.home"))
@@ -77,14 +93,12 @@ tasks.register("buildOfflineRepo") {
         var count = 0
 
         cacheRoot.walkTopDown().forEach { file ->
-
             if (file.isFile && (file.name.endsWith(".jar") || file.name.endsWith(".pom"))) {
 
                 val relativePath = file.absolutePath.substringAfter("files-2.1${File.separator}")
                 val parts = relativePath.split(File.separator)
 
                 if (parts.size >= 4) {
-
                     val group = parts[0]
                     val module = parts[1]
                     val version = parts[2]
