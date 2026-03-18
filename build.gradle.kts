@@ -37,8 +37,10 @@ tasks.register("buildOfflineRepo") {
     doLast {
 
         println("========================================")
-        println("STEP 1: Resolve dependencies (SAFE MODE)")
+        println("STEP 1: Resolve dependencies")
         println("========================================")
+
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
 
         projectPaths.forEach { path ->
 
@@ -50,16 +52,14 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            val gradleCmd = if (File(projectDir, "gradlew").exists()) {
-                if (System.getProperty("os.name").contains("Windows"))
-                    "gradlew.bat"
-                else
-                    "./gradlew"
-            } else {
-                "gradle"
+            val gradleCmd = when {
+                isWindows && File(projectDir, "gradlew.bat").exists() -> "gradlew.bat"
+                !isWindows && File(projectDir, "gradlew").exists() -> "./gradlew"
+                else -> "gradle"
             }
 
-            // FIX: use ProcessBuilder instead of exec
+            println("Using command: $gradleCmd")
+
             val process = ProcessBuilder(
                 gradleCmd,
                 "help",
