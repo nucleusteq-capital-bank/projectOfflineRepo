@@ -1,6 +1,9 @@
 import java.io.File
 import java.util.Properties
 
+// ==============================
+// Load projects from properties
+// ==============================
 val props = Properties()
 file("projects.properties").inputStream().use { props.load(it) }
 
@@ -18,6 +21,9 @@ println("Projects loaded: $projectPaths")
 
 val repoDir = file("offline-repo")
 
+// ==============================
+// Main Task
+// ==============================
 tasks.register("buildOfflineRepo") {
 
     group = "offline"
@@ -26,7 +32,7 @@ tasks.register("buildOfflineRepo") {
     doLast {
 
         println("========================================")
-        println("STEP 1: Resolve dependencies")
+        println("STEP 1: Force dependency resolution")
         println("========================================")
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
@@ -50,8 +56,10 @@ tasks.register("buildOfflineRepo") {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
+                    "clean",
                     "build",
-                    "--refresh-dependencies"
+                    "--refresh-dependencies",
+                    "--no-build-cache"
                 )
                     .directory(projectDir)
                     .inheritIO()
@@ -65,8 +73,10 @@ tasks.register("buildOfflineRepo") {
 
                 ProcessBuilder(
                     wrapper.absolutePath,
+                    "clean",
                     "build",
-                    "--refresh-dependencies"
+                    "--refresh-dependencies",
+                    "--no-build-cache"
                 )
                     .directory(projectDir)
                     .inheritIO()
@@ -98,7 +108,6 @@ tasks.register("buildOfflineRepo") {
             if (file.isFile && (file.name.endsWith(".jar") || file.name.endsWith(".pom"))) {
 
                 val segments = file.toPath().toString().split(File.separator)
-
                 val index = segments.indexOf("files-2.1")
 
                 if (index != -1 && segments.size > index + 4) {
@@ -106,7 +115,6 @@ tasks.register("buildOfflineRepo") {
                     val group = segments[index + 1]
                     val module = segments[index + 2]
                     val version = segments[index + 3]
-                    val hashDir = segments[index + 4] // important
 
                     val targetDir = repoDir
                         .resolve(group.replace(".", "/"))
@@ -117,7 +125,7 @@ tasks.register("buildOfflineRepo") {
 
                     val targetFile = targetDir.resolve(file.name)
 
-                    // Avoid duplicates from multiple hash folders
+                    // Avoid duplicates (multiple hash dirs)
                     if (!targetFile.exists()) {
                         file.copyTo(targetFile)
                         count++
