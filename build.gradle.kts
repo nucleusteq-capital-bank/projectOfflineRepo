@@ -27,6 +27,7 @@ val repoDir = file("offline-repo")
 tasks.register("buildOfflineRepo") {
 
     group = "offline"
+    description = "Build offline repo from project dependency resolution"
 
     doLast {
 
@@ -44,19 +45,17 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            val processBuilder = ProcessBuilder(
-                "gradle",
+            val gradleCmd = "gradlew.bat"
+
+            val process = ProcessBuilder(
+                gradleCmd,
                 "help",
                 "--refresh-dependencies"
             )
                 .directory(projectDir)
                 .inheritIO()
+                .start()
 
-            //  CRITICAL FIX: propagate PATH
-            val env = processBuilder.environment()
-            env["PATH"] = System.getenv("PATH") ?: ""
-
-            val process = processBuilder.start()
             val exitCode = process.waitFor()
 
             if (exitCode != 0) {
