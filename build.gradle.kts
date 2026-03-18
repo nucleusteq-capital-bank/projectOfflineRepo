@@ -59,7 +59,7 @@ tasks.register("buildOfflineRepo") {
                 "gradle"
             }
 
-            //  FIX: use ProcessBuilder instead of exec
+            // FIX: use ProcessBuilder instead of exec
             val process = ProcessBuilder(
                 gradleCmd,
                 "help",
