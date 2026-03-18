@@ -50,12 +50,13 @@ tasks.register("buildOfflineRepo") {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
-                    "help",
+                    "build",
                     "--refresh-dependencies"
                 )
                     .directory(projectDir)
                     .inheritIO()
                     .start()
+
             } else {
                 val wrapper = File(projectDir, "gradlew")
                 if (!wrapper.exists()) {
@@ -64,7 +65,7 @@ tasks.register("buildOfflineRepo") {
 
                 ProcessBuilder(
                     wrapper.absolutePath,
-                    "help",
+                    "build",
                     "--refresh-dependencies"
                 )
                     .directory(projectDir)
@@ -80,7 +81,7 @@ tasks.register("buildOfflineRepo") {
         }
 
         println("========================================")
-        println("STEP 2: Copy Gradle cache -> offline repo")
+        println("STEP 2: Copy Gradle cache → offline repo")
         println("========================================")
 
         val cacheRoot = File(System.getProperty("user.home"))
@@ -93,15 +94,19 @@ tasks.register("buildOfflineRepo") {
         var count = 0
 
         cacheRoot.walkTopDown().forEach { file ->
+
             if (file.isFile && (file.name.endsWith(".jar") || file.name.endsWith(".pom"))) {
 
-                val relativePath = file.absolutePath.substringAfter("files-2.1${File.separator}")
-                val parts = relativePath.split(File.separator)
+                val segments = file.toPath().toString().split(File.separator)
 
-                if (parts.size >= 4) {
-                    val group = parts[0]
-                    val module = parts[1]
-                    val version = parts[2]
+                val index = segments.indexOf("files-2.1")
+
+                if (index != -1 && segments.size > index + 4) {
+
+                    val group = segments[index + 1]
+                    val module = segments[index + 2]
+                    val version = segments[index + 3]
+                    val hashDir = segments[index + 4] // important
 
                     val targetDir = repoDir
                         .resolve(group.replace(".", "/"))
@@ -110,12 +115,13 @@ tasks.register("buildOfflineRepo") {
 
                     targetDir.mkdirs()
 
-                    file.copyTo(
-                        targetDir.resolve(file.name),
-                        overwrite = true
-                    )
+                    val targetFile = targetDir.resolve(file.name)
 
-                    count++
+                    // Avoid duplicates from multiple hash folders
+                    if (!targetFile.exists()) {
+                        file.copyTo(targetFile)
+                        count++
+                    }
                 }
             }
         }
