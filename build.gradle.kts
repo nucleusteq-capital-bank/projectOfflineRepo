@@ -107,7 +107,7 @@ tasks.register("buildOfflineRepo") {
         }
 
         println("========================================")
-        println(" OFFLINE REPO READY")
+        println("OFFLINE REPO READY")
         println("Artifacts copied: $count")
         println("Location: ${repoDir.absolutePath}")
         println("========================================")
