@@ -22,17 +22,11 @@ println("Projects loaded: $projectPaths")
 
 val repoDir = file("offline-repo")
 
-repositories {
-    mavenCentral()
-    gradlePluginPortal()
-}
-
 // ---------------- TASK ----------------
 
 tasks.register("buildOfflineRepo") {
 
     group = "offline"
-    description = "Build offline repo from project dependency resolution"
 
     doLast {
 
@@ -50,18 +44,19 @@ tasks.register("buildOfflineRepo") {
 
             println("➡ Resolving: $path")
 
-            //  ALWAYS USE SYSTEM GRADLE
-            val gradleCmd = "gradle"
-
-            val process = ProcessBuilder(
-                gradleCmd,
+            val processBuilder = ProcessBuilder(
+                "gradle",
                 "help",
                 "--refresh-dependencies"
             )
                 .directory(projectDir)
                 .inheritIO()
-                .start()
 
+            //  CRITICAL FIX: propagate PATH
+            val env = processBuilder.environment()
+            env["PATH"] = System.getenv("PATH") ?: ""
+
+            val process = processBuilder.start()
             val exitCode = process.waitFor()
 
             if (exitCode != 0) {
