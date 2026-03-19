@@ -66,19 +66,25 @@ tasks.register("buildOfflineRepo") {
                     wrapper.absolutePath,
                     "dependencies",
                     "--refresh-dependencies",
-                    "--no-daemon"
+                    "--no-daemon",
+                    "--console=plain"
                 )
             } else {
                 ProcessBuilder(
                     wrapper.absolutePath,
                     "dependencies",
                     "--refresh-dependencies",
-                    "--no-daemon"
+                    "--no-daemon",
+                    "--console=plain"
                 )
             }
                 .directory(projectDir)
-                .inheritIO()
+                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .start()
+
+            process1.environment()["CI"] = "true"
 
             val exit1 = process1.waitFor()
 
@@ -87,7 +93,7 @@ tasks.register("buildOfflineRepo") {
             }
 
             // -------------------------------
-            // STEP 1B: buildEnvironment (CRITICAL)
+            // STEP 1B: buildEnvironment
             // -------------------------------
             println("Resolving buildscript deps: $path")
 
@@ -97,19 +103,25 @@ tasks.register("buildOfflineRepo") {
                     wrapper.absolutePath,
                     "buildEnvironment",
                     "--refresh-dependencies",
-                    "--no-daemon"
+                    "--no-daemon",
+                    "--console=plain"
                 )
             } else {
                 ProcessBuilder(
                     wrapper.absolutePath,
                     "buildEnvironment",
                     "--refresh-dependencies",
-                    "--no-daemon"
+                    "--no-daemon",
+                    "--console=plain"
                 )
             }
                 .directory(projectDir)
-                .inheritIO()
+                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .start()
+
+            process2.environment()["CI"] = "true"
 
             val exit2 = process2.waitFor()
 
@@ -193,8 +205,12 @@ tasks.register("buildOfflineRepoImage") {
             "-t", "offline-repo:latest",
             "."
         )
-            .inheritIO()
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .redirectInput(ProcessBuilder.Redirect.PIPE)
             .start()
+
+        process.environment()["CI"] = "true"
 
         val exit = process.waitFor()
 
