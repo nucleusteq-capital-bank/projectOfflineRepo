@@ -60,7 +60,7 @@ tasks.register("buildOfflineRepo") {
             // -------------------------------
             // STEP 1A: dependencies
             // -------------------------------
-            val process1 = if (isWindows) {
+            val pb1 = if (isWindows) {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
@@ -78,13 +78,15 @@ tasks.register("buildOfflineRepo") {
                     "--console=plain"
                 )
             }
+
+            pb1.environment()["CI"] = "true"
+
+            val process1 = pb1
                 .directory(projectDir)
                 .redirectOutput(ProcessBuilder.Redirect.INHERIT)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .start()
-
-            process1.environment()["CI"] = "true"
 
             val exit1 = process1.waitFor()
 
@@ -97,7 +99,7 @@ tasks.register("buildOfflineRepo") {
             // -------------------------------
             println("Resolving buildscript deps: $path")
 
-            val process2 = if (isWindows) {
+            val pb2 = if (isWindows) {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
@@ -115,13 +117,15 @@ tasks.register("buildOfflineRepo") {
                     "--console=plain"
                 )
             }
+
+            pb2.environment()["CI"] = "true"
+
+            val process2 = pb2
                 .directory(projectDir)
                 .redirectOutput(ProcessBuilder.Redirect.INHERIT)
                 .redirectError(ProcessBuilder.Redirect.INHERIT)
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
                 .start()
-
-            process2.environment()["CI"] = "true"
 
             val exit2 = process2.waitFor()
 
@@ -200,17 +204,19 @@ tasks.register("buildOfflineRepoImage") {
         println("STEP 3: Build Docker Image")
         println("========================================")
 
-        val process = ProcessBuilder(
+        val pb = ProcessBuilder(
             "docker", "build",
             "-t", "offline-repo:latest",
             "."
         )
+
+        pb.environment()["CI"] = "true"
+
+        val process = pb
             .redirectOutput(ProcessBuilder.Redirect.INHERIT)
             .redirectError(ProcessBuilder.Redirect.INHERIT)
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .start()
-
-        process.environment()["CI"] = "true"
 
         val exit = process.waitFor()
 
