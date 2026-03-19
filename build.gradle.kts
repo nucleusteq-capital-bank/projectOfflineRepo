@@ -32,7 +32,7 @@ tasks.register("buildOfflineRepo") {
     doLast {
 
         println("========================================")
-        println("STEP 1: Resolve dependencies (FAST MODE)")
+        println("STEP 1: Resolve dependencies (FAST + VALID)")
         println("========================================")
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
@@ -56,8 +56,10 @@ tasks.register("buildOfflineRepo") {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
-                    "dependencies",
+                    "build",
+                    "-x", "test",
                     "--refresh-dependencies",
+                    "--no-build-cache",
                     "--no-daemon"
                 )
                     .directory(projectDir)
@@ -72,8 +74,10 @@ tasks.register("buildOfflineRepo") {
 
                 ProcessBuilder(
                     wrapper.absolutePath,
-                    "dependencies",
+                    "build",
+                    "-x", "test",
                     "--refresh-dependencies",
+                    "--no-build-cache",
                     "--no-daemon"
                 )
                     .directory(projectDir)
