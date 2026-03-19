@@ -22,7 +22,7 @@ println("Projects loaded: $projectPaths")
 val repoDir = file("offline-repo")
 
 // ==============================
-// Main Task
+// TASK 1: Build Offline Repo
 // ==============================
 tasks.register("buildOfflineRepo") {
 
@@ -32,7 +32,7 @@ tasks.register("buildOfflineRepo") {
     doLast {
 
         println("========================================")
-        println("STEP 1: Force dependency resolution")
+        println("STEP 1: Resolve dependencies (FAST MODE)")
         println("========================================")
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
@@ -56,10 +56,9 @@ tasks.register("buildOfflineRepo") {
                 ProcessBuilder(
                     "cmd", "/c",
                     wrapper.absolutePath,
-                    "clean",
-                    "build",
+                    "dependencies",
                     "--refresh-dependencies",
-                    "--no-build-cache"
+                    "--no-daemon"
                 )
                     .directory(projectDir)
                     .inheritIO()
@@ -73,10 +72,9 @@ tasks.register("buildOfflineRepo") {
 
                 ProcessBuilder(
                     wrapper.absolutePath,
-                    "clean",
-                    "build",
+                    "dependencies",
                     "--refresh-dependencies",
-                    "--no-build-cache"
+                    "--no-daemon"
                 )
                     .directory(projectDir)
                     .inheritIO()
@@ -125,7 +123,6 @@ tasks.register("buildOfflineRepo") {
 
                     val targetFile = targetDir.resolve(file.name)
 
-                    // Avoid duplicates (multiple hash dirs)
                     if (!targetFile.exists()) {
                         file.copyTo(targetFile)
                         count++
@@ -142,6 +139,9 @@ tasks.register("buildOfflineRepo") {
     }
 }
 
+// ==============================
+// TASK 2: Build Docker Image
+// ==============================
 tasks.register("buildOfflineRepoImage") {
 
     group = "offline"
@@ -152,14 +152,9 @@ tasks.register("buildOfflineRepoImage") {
     doLast {
 
         val repoDir = file("offline-repo")
+
         if (!repoDir.exists() || repoDir.listFiles()?.isEmpty() == true) {
-            throw GradleException("offline-repo is missing or empty. Run buildOfflineRepo first.")
-        }
-
-        val dockerfile = file("Dockerfile")
-
-        if (!dockerfile.exists()) {
-            throw GradleException("Dockerfile not found in project root.")
+            throw GradleException("offline-repo is missing or empty.")
         }
 
         println("========================================")
@@ -189,6 +184,9 @@ tasks.register("buildOfflineRepoImage") {
     }
 }
 
+// ==============================
+// TASK 3: Run Docker Container
+// ==============================
 tasks.register("runOfflineRepoImage") {
 
     group = "offline"
@@ -216,7 +214,7 @@ tasks.register("runOfflineRepoImage") {
         val exitCode = process.waitFor()
 
         if (exitCode != 0) {
-            println("⚠ Container may already exist. Trying restart...")
+            println("Container may already exist. Attempting restart...")
 
             ProcessBuilder("docker", "start", "offline-maven-repo")
                 .inheritIO()
