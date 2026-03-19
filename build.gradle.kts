@@ -141,3 +141,91 @@ tasks.register("buildOfflineRepo") {
         println("========================================")
     }
 }
+
+tasks.register("buildOfflineRepoImage") {
+
+    group = "offline"
+    description = "Build Docker image for offline Maven repository"
+
+    dependsOn("buildOfflineRepo")
+
+    doLast {
+
+        val repoDir = file("offline-repo")
+        if (!repoDir.exists() || repoDir.listFiles()?.isEmpty() == true) {
+            throw GradleException("offline-repo is missing or empty. Run buildOfflineRepo first.")
+        }
+
+        val dockerfile = file("Dockerfile")
+
+        if (!dockerfile.exists()) {
+            throw GradleException("Dockerfile not found in project root.")
+        }
+
+        println("========================================")
+        println("STEP 3: Build Docker Image")
+        println("========================================")
+
+        val process = ProcessBuilder(
+            "docker",
+            "build",
+            "-t",
+            "offline-maven-repo:latest",
+            "."
+        )
+            .inheritIO()
+            .start()
+
+        val exitCode = process.waitFor()
+
+        if (exitCode != 0) {
+            throw GradleException("Docker build failed")
+        }
+
+        println("========================================")
+        println("DOCKER IMAGE READY")
+        println("Image: offline-maven-repo:latest")
+        println("========================================")
+    }
+}
+
+tasks.register("runOfflineRepoImage") {
+
+    group = "offline"
+    description = "Run offline Maven repo Docker container"
+
+    doLast {
+
+        println("========================================")
+        println("STEP 4: Run Docker Container")
+        println("========================================")
+
+        val process = ProcessBuilder(
+            "docker",
+            "run",
+            "-d",
+            "-p",
+            "8081:8081",
+            "--name",
+            "offline-maven-repo",
+            "offline-maven-repo:latest"
+        )
+            .inheritIO()
+            .start()
+
+        val exitCode = process.waitFor()
+
+        if (exitCode != 0) {
+            println("⚠ Container may already exist. Trying restart...")
+
+            ProcessBuilder("docker", "start", "offline-maven-repo")
+                .inheritIO()
+                .start()
+                .waitFor()
+        }
+
+        println("========================================")
+        println("CONTAINER RUNNING at http://localhost:8081")
+        println("========================================")
+    }
+}
