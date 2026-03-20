@@ -79,33 +79,58 @@ tasks.register("buildOfflineRepo") {
     }
 }
 
-// -------------------------------
-// Docker build
-// -------------------------------
-tasks.register("buildOfflineRepoImage") {
+tasks.register("buildOfflineRepo") {
 
-    dependsOn("buildOfflineRepo")
+    group = "offline"
+    description = "Build offline repo from EXISTING Gradle cache"
 
     doLast {
 
         println("========================================")
-        println("Building Docker Image")
+        println("STEP 1: Using existing Gradle cache")
         println("========================================")
 
-        val process = ProcessBuilder(
-            "docker", "build",
-            "-t", "offline-repo:latest",
-            "."
-        )
-            .inheritIO()
-            .start()
+        val cacheRoot = File(System.getProperty("user.home"))
+            .resolve(".gradle/caches/modules-2/files-2.1")
 
-        val exit = process.waitFor()
-
-        if (exit != 0) {
-            throw GradleException("Docker build failed")
+        if (!cacheRoot.exists()) {
+            throw GradleException(" Gradle cache not found at: $cacheRoot")
         }
 
-        println(" Image ready: offline-repo:latest")
+        val repoDir = file("offline-repo")
+
+        repoDir.deleteRecursively()
+        repoDir.mkdirs()
+
+        var count = 0
+
+        cacheRoot.walkTopDown()
+            .filter { it.isFile && (it.extension == "jar" || it.extension == "pom") }
+            .forEach { file ->
+
+                val pathParts = file.absolutePath
+                    .substringAfter("files-2.1${File.separator}")
+                    .split(File.separator)
+
+                if (pathParts.size >= 4) {
+
+                    val group = pathParts[0]
+                    val module = pathParts[1]
+                    val version = pathParts[2]
+
+                    val targetDir = repoDir
+                        .resolve(group.replace(".", "/"))
+                        .resolve(module)
+                        .resolve(version)
+
+                    targetDir.mkdirs()
+
+                    file.copyTo(targetDir.resolve(file.name), overwrite = true)
+                    count++
+                }
+            }
+
+        println(" Artifacts copied: $count")
+        println(" Repo created at: ${repoDir.absolutePath}")
     }
 }
