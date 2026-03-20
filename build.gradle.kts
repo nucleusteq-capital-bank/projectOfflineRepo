@@ -1,98 +1,39 @@
-
 import java.io.File
 import java.util.Properties
 
-// ==============================
-// Load projects from properties
-// ==============================
-val props = Properties()
-file("projects.properties").inputStream().use { props.load(it) }
-
-val projectPaths = props.getProperty("projects")
-    ?.split(",")
-    ?.map { it.trim() }
-    ?.filter { it.isNotEmpty() }
-    ?: emptyList()
-
-if (projectPaths.isEmpty()) {
-    throw GradleException("No projects defined in projects.properties")
-}
-
-println("Projects loaded: $projectPaths")
-
 val repoDir = file("offline-repo")
 
-// ==============================
-// Main Task
-// ==============================
 tasks.register("buildOfflineRepo") {
 
     group = "offline"
-    description = "Build offline repo from project dependency resolution"
+    description = "Build offline repo (FAST & STABLE)"
 
     doLast {
 
         println("========================================")
-        println("STEP 1: Force dependency resolution")
+        println("STEP 1: Resolve dependencies (build)")
         println("========================================")
 
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
 
-        projectPaths.forEach { path ->
+        val command = if (isWindows) {
+            listOf("cmd", "/c", "./gradlew", "build", "--refresh-dependencies", "--no-daemon")
+        } else {
+            listOf("./gradlew", "build", "--refresh-dependencies", "--no-daemon")
+        }
 
-            val projectDir = file(path)
+        val process = ProcessBuilder(command)
+            .directory(projectDir)
+            .inheritIO()
+            .start()
 
-            if (!projectDir.exists()) {
-                throw GradleException("Project path not found: $path")
-            }
-
-            println("Resolving: $path")
-
-            val process = if (isWindows) {
-                val wrapper = File(projectDir, "gradlew.bat")
-                if (!wrapper.exists()) {
-                    throw GradleException("Missing gradlew.bat in: ${projectDir.absolutePath}")
-                }
-
-                ProcessBuilder(
-                    "cmd", "/c",
-                    wrapper.absolutePath,
-                    "clean",
-                    "build",
-                    "--refresh-dependencies",
-                    "--no-build-cache"
-                )
-                    .directory(projectDir)
-                    .inheritIO()
-                    .start()
-
-            } else {
-                val wrapper = File(projectDir, "gradlew")
-                if (!wrapper.exists()) {
-                    throw GradleException("Missing gradlew in: ${projectDir.absolutePath}")
-                }
-
-                ProcessBuilder(
-                    wrapper.absolutePath,
-                    "clean",
-                    "build",
-                    "--refresh-dependencies",
-                    "--no-build-cache"
-                )
-                    .directory(projectDir)
-                    .inheritIO()
-                    .start()
-            }
-
-            val exitCode = process.waitFor()
-
-            if (exitCode != 0) {
-                throw GradleException("Gradle failed for project: $path")
-            }
+        val exit = process.waitFor()
+        if (exit != 0) {
+            throw GradleException("Dependency resolution failed")
         }
 
         println("========================================")
-        println("STEP 2: Copy Gradle cache → offline repo")
+        println("STEP 2: Copy artifacts")
         println("========================================")
 
         val cacheRoot = File(System.getProperty("user.home"))
@@ -102,20 +43,24 @@ tasks.register("buildOfflineRepo") {
             throw GradleException("Gradle cache not found: $cacheRoot")
         }
 
+        repoDir.deleteRecursively()
+        repoDir.mkdirs()
+
         var count = 0
 
-        cacheRoot.walkTopDown().forEach { file ->
+        cacheRoot.walkTopDown()
+            .filter { it.isFile && (it.extension == "jar" || it.extension == "pom") }
+            .forEach { file ->
 
-            if (file.isFile && (file.name.endsWith(".jar") || file.name.endsWith(".pom"))) {
+                val parts = file.absolutePath
+                    .substringAfter("files-2.1${File.separator}")
+                    .split(File.separator)
 
-                val segments = file.toPath().toString().split(File.separator)
-                val index = segments.indexOf("files-2.1")
+                if (parts.size >= 4) {
 
-                if (index != -1 && segments.size > index + 4) {
-
-                    val group = segments[index + 1]
-                    val module = segments[index + 2]
-                    val version = segments[index + 3]
+                    val group = parts[0]
+                    val module = parts[1]
+                    val version = parts[2]
 
                     val targetDir = repoDir
                         .resolve(group.replace(".", "/"))
@@ -124,22 +69,43 @@ tasks.register("buildOfflineRepo") {
 
                     targetDir.mkdirs()
 
-                    val targetFile = targetDir.resolve(file.name)
-
-                    // Avoid duplicates (multiple hash dirs)
-                    if (!targetFile.exists()) {
-                        file.copyTo(targetFile)
-                        count++
-                    }
+                    file.copyTo(targetDir.resolve(file.name), overwrite = true)
+                    count++
                 }
             }
-        }
 
-        println("========================================")
-        println("OFFLINE REPO READY")
         println("Artifacts copied: $count")
-        println("Location: ${repoDir.absolutePath}")
-        println("========================================")
+        println("Repo: ${repoDir.absolutePath}")
     }
 }
 
+// -------------------------------
+// Docker build
+// -------------------------------
+tasks.register("buildOfflineRepoImage") {
+
+    dependsOn("buildOfflineRepo")
+
+    doLast {
+
+        println("========================================")
+        println("Building Docker Image")
+        println("========================================")
+
+        val process = ProcessBuilder(
+            "docker", "build",
+            "-t", "offline-repo:latest",
+            "."
+        )
+            .inheritIO()
+            .start()
+
+        val exit = process.waitFor()
+
+        if (exit != 0) {
+            throw GradleException("Docker build failed")
+        }
+
+        println(" Image ready: offline-repo:latest")
+    }
+}
