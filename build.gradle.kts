@@ -1,119 +1,138 @@
+import java.net.URL
 import java.io.File
 
 plugins {
-    base
+    id("java")
 }
 
-// --------------------------------------------
-// CONFIG
-// --------------------------------------------
-val repoDir = file("offline-repo")
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
 
-// --------------------------------------------
-// TASK: Build Offline Repo from Gradle Cache
-// --------------------------------------------
-tasks.register("buildOfflineRepo") {
+val offlineRepoDir = layout.buildDirectory.dir("offline-repo")
 
-    group = "offline"
-    description = "Build offline repo from existing Gradle cache"
+fun downloadArtifact(group: String, name: String, version: String) {
 
-    doLast {
+    val groupPath = group.replace(".", "/")
+    val baseUrl = "https://repo.maven.apache.org/maven2/$groupPath/$name/$version"
 
-        println("========================================")
-        println("STEP 1: Using existing Gradle cache")
-        println("========================================")
+    val targetDir = File(offlineRepoDir.get().asFile, "$groupPath/$name/$version")
+    targetDir.mkdirs()
 
-        val cacheRoot = File(System.getProperty("user.home"))
-            .resolve(".gradle/caches/modules-2/files-2.1")
+    val jarUrl = "$baseUrl/$name-$version.jar"
+    val pomUrl = "$baseUrl/$name-$version.pom"
 
-        if (!cacheRoot.exists()) {
-            throw GradleException(" Gradle cache not found at: $cacheRoot")
+    val jarFile = File(targetDir, "$name-$version.jar")
+    val pomFile = File(targetDir, "$name-$version.pom")
+
+    try {
+        println("⬇️ Downloading $name-$version.jar")
+
+        URL(jarUrl).openStream().use { input ->
+            jarFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
         }
 
-        println("Cache location: $cacheRoot")
-
-        // Clean previous repo
-        repoDir.deleteRecursively()
-        repoDir.mkdirs()
-
-        println("========================================")
-        println("STEP 2: Copying artifacts")
-        println("========================================")
-
-        var count = 0
-
-        cacheRoot.walkTopDown()
-            .filter { it.isFile && (it.extension == "jar" || it.extension == "pom") }
-            .forEach { file ->
-
-                val relativePath = file.absolutePath
-                    .substringAfter("files-2.1${File.separator}")
-
-                val parts = relativePath.split(File.separator)
-
-                if (parts.size >= 4) {
-
-                    val group = parts[0]
-                    val module = parts[1]
-                    val version = parts[2]
-
-                    val targetDir = repoDir
-                        .resolve(group.replace(".", "/"))
-                        .resolve(module)
-                        .resolve(version)
-
-                    targetDir.mkdirs()
-
-                    val targetFile = targetDir.resolve(file.name)
-
-                    try {
-                        file.copyTo(targetFile, overwrite = true)
-                        count++
-                    } catch (e: Exception) {
-                        println("Skipped: ${file.name}")
-                    }
-                }
+        URL(pomUrl).openStream().use { input ->
+            pomFile.outputStream().use { output ->
+                input.copyTo(output)
             }
+        }
 
-        println("========================================")
-        println(" Artifacts copied: $count")
-        println(" Repo created at: ${repoDir.absolutePath}")
-        println("========================================")
+    } catch (e: Exception) {
+        println("❌ Failed to download $group:$name:$version")
     }
 }
 
-// --------------------------------------------
-// TASK: Build Docker Image
-// --------------------------------------------
-tasks.register("buildOfflineRepoImage") {
+// ----------------------------------
+// MAIN OFFLINE DEPENDENCIES
+// ----------------------------------
+val offlineDependencies = configurations.create("offlineDependencies") {
+    isCanBeResolved = true
+    isCanBeConsumed = false
+    isTransitive = true
+}
 
-    group = "offline"
-    description = "Build Docker image for offline repo"
+dependencies {
 
-    dependsOn("buildOfflineRepo")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-web:3.5.6")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-data-jpa:3.5.6")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-security:3.5.6")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-validation:3.5.6")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-data-redis:3.5.6")
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-oauth2-resource-server:3.5.6")
+
+    add("offlineDependencies", "com.microsoft.sqlserver:mssql-jdbc:12.6.1.jre11")
+
+    add("offlineDependencies", "org.springframework.boot:spring-boot-starter-test:3.5.6")
+
+    add("offlineDependencies", "org.springframework.boot:spring-boot-gradle-plugin:3.5.6")
+    add("offlineDependencies", "io.spring.gradle:dependency-management-plugin:1.1.6")
+    add("offlineDependencies", "org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:4.4.1.3373")
+}
+
+// ----------------------------------
+// BUILD OFFLINE REPO
+// ----------------------------------
+tasks.register("buildOfflineRepo") {
 
     doLast {
 
-        println("========================================")
-        println("STEP 3: Building Docker Image")
-        println("========================================")
+        println("Resolving dependencies...")
+        offlineDependencies.resolve()
 
-        val process = ProcessBuilder(
-            "docker", "build",
-            "-t", "offline-repo:latest",
-            "."
-        )
-            .inheritIO()
-            .start()
+        val repoRoot = offlineRepoDir.get().asFile
+        val gradleCache = File(System.getProperty("user.home"), ".gradle/caches/modules-2/files-2.1")
 
-        val exitCode = process.waitFor()
+        println("Copying from Gradle cache...")
 
-        if (exitCode != 0) {
-            throw GradleException(" Docker build failed")
+        gradleCache.walkTopDown().forEach { file ->
+
+            if (file.isFile && file.extension == "jar") {
+
+                val parts = file.absolutePath.split("/files-2.1/")[1].split("/")
+
+                if (parts.size < 4) return@forEach
+
+                val group = parts[0]
+                val name = parts[1]
+                val version = parts[2]
+
+                val groupPath = group.replace(".", "/")
+
+                val targetDir = File(repoRoot, "$groupPath/$name/$version")
+                targetDir.mkdirs()
+
+                file.copyTo(
+                    File(targetDir, "$name-$version.jar"),
+                    overwrite = true
+                )
+
+                val pomFile = File(targetDir, "$name-$version.pom")
+
+                if (!pomFile.exists()) {
+                    val pomUrl = "https://repo.maven.apache.org/maven2/" +
+                            "$groupPath/$name/$version/$name-$version.pom"
+
+                    try {
+                        URL(pomUrl).openStream().use { input ->
+                            pomFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    } catch (_: Exception) {
+                        println("⚠️ Missing POM for $name:$version")
+                    }
+                }
+            }
         }
 
-        println("========================================")
-        println(" Docker image created: offline-repo:latest")
-        println("========================================")
+        // 🔥 MANUAL FIX — THIS IS THE KEY
+        println("🚀 Injecting Kotlin manually...")
+        downloadArtifact("org.jetbrains.kotlin", "kotlin-stdlib", "1.9.25")
+
+        println("✅ OFFLINE REPO READY (INCLUDING KOTLIN)")
     }
 }

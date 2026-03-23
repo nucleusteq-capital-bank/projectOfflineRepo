@@ -1,14 +1,17 @@
-# Lightweight web server
 FROM nginx:alpine
 
-# Remove default content
+# Remove default config
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Clean default html
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy offline repo
-COPY offline-repo/ /usr/share/nginx/html/
+COPY build/offline-repo/ /usr/share/nginx/html/
 
-# Expose port
-EXPOSE 8181
+EXPOSE 80
 
-# Configure nginx to use port 8081
-RUN sed -i 's/listen       80;/listen 8181;/' /etc/nginx/conf.d/default.conf
+CMD ["nginx", "-g", "daemon off;"]
