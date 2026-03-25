@@ -72,16 +72,21 @@ dependencies {
     add("offlineDependencies", "com.microsoft.sqlserver:mssql-jdbc:12.6.1.jre11")
     add("offlineDependencies", "org.springframework.boot:spring-boot-starter-test:4.0.2")
 
+    add("offlineDependencies", "org.springframework.cloud:spring-cloud-dependencies:2025.0.1")
+    add("offlineDependencies", "com.azure.spring:spring-cloud-azure-dependencies:6.1.0")
+
     // ── Additional application dependencies ───────────────────────────────────
     add("offlineDependencies", "org.apache.commons:commons-csv:1.10.0")
     add("offlineDependencies", "com.azure:azure-identity:1.12.1")
     add("offlineDependencies", "com.microsoft.graph:microsoft-graph:5.80.0")
     add("offlineDependencies", "com.squareup.okhttp3:okhttp:4.12.0")
     add("offlineDependencies", "org.projectlombok:lombok:1.18.32")
+    add("offlineDependencies", "org.projectlombok:lombok:1.18.42")
 
     // ── Gradle plugins (resolved as plain Maven artifacts) ────────────────────
     add("offlinePlugins", "org.springframework.boot:spring-boot-gradle-plugin:4.0.2")
     add("offlinePlugins", "io.spring.gradle:dependency-management-plugin:1.1.6")
+    add("offlinePlugins", "io.spring.dependency-management:io.spring.dependency-management.gradle.plugin:1.1.6")
     add("offlinePlugins", "org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:5.1.0.4882")
 
 
