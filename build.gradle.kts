@@ -142,46 +142,34 @@ dependencies {
 
 }
 
-// ----------------------------------
-// HELPER: copy one file from the Gradle cache into the offline repo
-// ----------------------------------
 fun installFromCache(cacheRoot: File, repoRoot: File, jarFile: File) {
-    // Cache path looks like:
-    //   …/files-2.1/<group>/<name>/<version>/<hash>/<name>-<version>.jar
     val relative = jarFile.absolutePath
         .substringAfter("files-2.1${File.separator}")
-        .split(File.separator)          // group, name, version, hash, filename
+        .split(File.separator)
 
     if (relative.size < 5) return
 
     val group   = relative[0]
     val name    = relative[1]
     val version = relative[2]
-    // relative[3] is the hash directory — skip it
     val fileName = relative[4]
 
     val groupPath = group.replace(".", "/")
     val targetDir = File(repoRoot, "$groupPath/$name/$version")
     targetDir.mkdirs()
 
-    // Copy the JAR
-    jarFile.copyTo(File(targetDir, fileName), overwrite = true)
+    val target = File(targetDir, fileName)
+    
+    // Skip if already exists — avoids Windows file lock error
+    if (target.exists()) return
 
-    // Find and copy the sibling POM from the cache (same parent hash dir)
+    jarFile.copyTo(target, overwrite = false)
+
     val pomInCache = File(jarFile.parentFile, "$name-$version.pom")
     if (pomInCache.exists()) {
-        pomInCache.copyTo(File(targetDir, "$name-$version.pom"), overwrite = true)
-    } else {
-        // Fall back to downloading the POM if not cached locally
         val pomTarget = File(targetDir, "$name-$version.pom")
         if (!pomTarget.exists()) {
-            val pomUrl = "https://repo.maven.apache.org/maven2/" +
-                    "$groupPath/$name/$version/$name-$version.pom"
-            try {
-                URL(pomUrl).openStream().use { it.copyTo(pomTarget.outputStream()) }
-            } catch (_: Exception) {
-                println("⚠  Missing POM for $name:$version")
-            }
+            pomInCache.copyTo(pomTarget, overwrite = false)
         }
     }
 }
