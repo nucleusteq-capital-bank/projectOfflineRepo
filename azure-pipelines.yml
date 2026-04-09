@@ -11,109 +11,125 @@ parameters:
     values: [dev, qa, uat, prod]
 
 variables:
-  - ${{ if eq(parameters.environment, 'dev') }}:
-      - group: Opensky-Dev-VariableGroup
-      - name: AGENT_POOL
-        value: AKS-DEV-Opensky
-      - name: K8S_SERVICE_CONNECTION
-        value: serviceconnection-dev-opensky
+- ${{ if eq(parameters.environment, 'dev') }}:
+  - group: Opensky-Dev-VariableGroup
+  - name: AGENT_POOL
+    value: AKS-DEV-Opensky
+  - name: K8S_SERVICE_CONNECTION
+    value: serviceconnection-dev-opensky
 
-  - ${{ if eq(parameters.environment, 'qa') }}:
-      - group: Opensky-QA-VariableGroup
-      - name: AGENT_POOL
-        value: AKS-QA-Opensky
-      - name: K8S_SERVICE_CONNECTION
-        value: serviceconnection-qa-opensky
+- ${{ if eq(parameters.environment, 'qa') }}:
+  - group: Opensky-QA-VariableGroup
+  - name: AGENT_POOL
+    value: AKS-QA-Opensky
+  - name: K8S_SERVICE_CONNECTION
+    value: serviceconnection-qa-opensky
 
-  - ${{ if eq(parameters.environment, 'uat') }}:
-      - group: Opensky-UAT-VariableGroup
-      - name: AGENT_POOL
-        value: AKS-UAT-Opensky
-      - name: K8S_SERVICE_CONNECTION
-        value: serviceconnection-uat-opensky
-      - name: KEYVAULT_NAME
-        value: kvault-cus-uat-opensky
+- ${{ if eq(parameters.environment, 'uat') }}:
+  - group: Opensky-UAT-VariableGroup
+  - name: AGENT_POOL
+    value: AKS-UAT-Opensky
+  - name: K8S_SERVICE_CONNECTION
+    value: serviceconnection-uat-opensky
+  - name: KEYVAULT_NAME
+    value: kvault-cus-uat-opensky
 
-  - ${{ if eq(parameters.environment, 'prod') }}:
-      - name: AGENT_POOL
-        value: AKS-PROD-Opensky
-      - name: K8S_SERVICE_CONNECTION
-        value: serviceconnection-prod-opensky
-      - name: KEYVAULT_NAME
-        value: kvault-cus-prod-opensky
+- ${{ if eq(parameters.environment, 'prod') }}:
+  - name: AGENT_POOL
+    value: AKS-PROD-Opensky
+  - name: K8S_SERVICE_CONNECTION
+    value: serviceconnection-prod-opensky
+  - name: KEYVAULT_NAME
+    value: kvault-cus-prod-opensky
 
-  - name: IMAGE_NAME
-    value: offline-repo
-  - name: ACR_REPO_PATH
-    value: base-images/offline-repo
+- name: IMAGE_NAME
+  value: offline-repo
+- name: ACR_REPO_PATH
+  value: base-images/offline-repo
 
 pool:
   name: $(AGENT_POOL)
 
 # ---------- BUILD STAGE ----------
 stages:
-  - stage: Build
-    displayName: "Build and Push Docker Image"
-    jobs:
-      - job: BuildJob
-        displayName: BuildJob
-        steps:
-          - checkout: self
+- stage: Build
+  displayName: "Build and Push Docker Image"
+  jobs:
+  - job: BuildJob
+    displayName: BuildJob
+    steps:
+    - checkout: self
 
-          # CLEAN DOCKER SPACE
-          - script: |
-              echo "Cleaning Docker disk space..."
-              docker system prune -a -f || true
-            displayName: "Clean Docker Disk Space"
+    # STEP 0: Clean Docker Disk Space
+    - script: |
+        echo "Cleaning Docker disk space..."
+        docker system prune -a -f || true
+      displayName: "Clean Docker Disk Space"
 
-          # Load Key Vault secrets (UAT / PROD)
-          - ${{ if or(eq(parameters.environment, 'uat'), eq(parameters.environment, 'prod')) }}:
-              - task: AzureKeyVault@2
-                displayName: Load KeyVault secrets (Build)
-                inputs:
-                  azureSubscription: $(K8S_SERVICE_CONNECTION)
-                  KeyVaultName: $(KEYVAULT_NAME)
-                  SecretsFilter: |
-                    ACR-NAME
-                  RunAsPreJob: true
+    # Load Key Vault secrets (UAT / PROD only)
+    - ${{ if or(eq(parameters.environment, 'uat'), eq(parameters.environment, 'prod')) }}:
+      - task: AzureKeyVault@2
+        displayName: Load KeyVault secrets (Build)
+        inputs:
+          azureSubscription: $(K8S_SERVICE_CONNECTION)
+          KeyVaultName: $(KEYVAULT_NAME)
+          SecretsFilter: |
+            ACR-NAME
+          RunAsPreJob: true
 
-          # STEP 1: Gradle build
-          - script: |
-              echo "Running Gradle buildOfflineRepo..."
-              ./gradlew buildOfflineRepo
-            displayName: "Gradle buildOfflineRepo"
+    # STEP 1: Gradle build
+    - script: |
+        echo "Making gradlew executable..."
+        chmod +x gradlew
+        echo "Running Gradle buildOfflineRepo..."
+        ./gradlew buildOfflineRepo
+      displayName: "Gradle buildOfflineRepo"
 
-          # STEP 2-4: Build, tag & push image to ACR
-          - task: AzureCLI@2
-            name: BuildImage
-            displayName: "Build, Tag & Push Image to ACR"
-            inputs:
-              azureSubscription: $(K8S_SERVICE_CONNECTION)
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                set -e
-                IMAGE_TAG="$(Build.SourceBranchName)-$(Build.BuildId)"
-                LOCAL_IMAGE="$(IMAGE_NAME)"
-                REMOTE_IMAGE="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):latest"
-                REMOTE_IMAGE_VERSIONED="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):$IMAGE_TAG"
-                
-                echo "Generated IMAGE_TAG = $IMAGE_TAG"
-                echo "##vso[task.setvariable variable=IMAGE_TAG;isOutput=true]$IMAGE_TAG"
-                
-                # Build locally (matching: docker build -t offline-repo .)
-                echo "Building Docker image..."
-                docker build -f Dockerfile -t "$LOCAL_IMAGE" .
-                
-                # Tag for ACR (matching: docker tag offline-repo <registry>/base-images/offline-repo:latest)
-                echo "Tagging image..."
-                docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
-                docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE_VERSIONED"
-                
-                # Login and push
-                echo "Logging into ACR..."
-                az acr login --name $(ACR-NAME)
-                
-                echo "Pushing Docker image..."
-                docker push "$REMOTE_IMAGE"
-                docker push "$REMOTE_IMAGE_VERSIONED"
+    # STEP 2: Build Docker image
+    - script: |
+        echo "Building Docker image..."
+        docker build -f Dockerfile -t $(IMAGE_NAME) .
+      displayName: "Docker Build"
+
+    # STEP 3: Run container
+    - script: |
+        echo "Starting container..."
+        docker run -d -p 8181:80 --name offline-repo $(IMAGE_NAME)
+      displayName: "Run Container"
+
+    # STEP 3b: Verify container is running
+    - script: |
+        echo "Verifying container health..."
+        sleep 5
+        docker ps --filter "name=offline-repo"
+        curl -f http://localhost:8181 || echo "Warning: health check failed"
+      displayName: "Verify Container Health"
+
+    # STEP 4: Tag & Push to ACR
+    - task: AzureCLI@2
+      name: BuildImage
+      displayName: "Tag & Push Image to ACR"
+      inputs:
+        azureSubscription: $(K8S_SERVICE_CONNECTION)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -e
+          IMAGE_TAG="$(Build.SourceBranchName)-$(Build.BuildId)"
+          LOCAL_IMAGE="$(IMAGE_NAME)"
+          REMOTE_IMAGE="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):latest"
+          REMOTE_IMAGE_VERSIONED="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):$IMAGE_TAG"
+
+          echo "Generated IMAGE_TAG = $IMAGE_TAG"
+          echo "##vso[task.setvariable variable=IMAGE_TAG;isOutput=true]$IMAGE_TAG"
+
+          echo "Tagging image..."
+          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
+          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE_VERSIONED"
+
+          echo "Logging into ACR..."
+          az acr login --name $(ACR-NAME)
+
+          echo "Pushing Docker image..."
+          docker push "$REMOTE_IMAGE"
+          docker push "$REMOTE_IMAGE_VERSIONED"
