@@ -1,0 +1,21 @@
+resources:
+  - ../../base
+  - namespace.yaml
+  - podmonitor.yaml 
+
+namespace: capitalbank-dev
+patches:
+  - path: patch.yaml
+    target:
+      kind: Deployment
+      name: offline-repo-deployment
+images:
+  - name: akseus2devopenskyregistry.azurecr.io/base-images/offline-repo
+    newTag: placeholder
+
+
+configMapGenerator:
+  - name: offline-repo-config
+    behavior: merge
+    literals:
+      - BASE_URL=""
