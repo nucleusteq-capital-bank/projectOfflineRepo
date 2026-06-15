@@ -1,14 +1,8 @@
-# Lightweight web server
 FROM nginx:alpine
 
-# Remove default content
-RUN rm -rf /usr/share/nginx/html/*
+# Copy the offline repo built locally by 'gradle buildOfflineRepo'
+# Run 'gradle buildOfflineRepo' before building this image
+COPY build/offline-repo/ /usr/share/nginx/html/
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy offline repo
-COPY offline-repo/ /usr/share/nginx/html/
-
-# Expose port
-EXPOSE 8181
-
-# Configure nginx to use port 8081
-RUN sed -i 's/listen       80;/listen 8181;/' /etc/nginx/conf.d/default.conf
+EXPOSE 80
