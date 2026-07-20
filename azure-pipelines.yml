@@ -12,9 +12,9 @@ parameters:
       - dev
 
   - name: imageTag
-    displayName: "Image Tag to Deploy"
+    displayName: "Image Tag to Deploy (leave default to auto-generate)"
     type: string
-    default: latest
+    default: auto
 
 variables:
   - ${{ if eq(parameters.environment, 'dev') }}:
@@ -44,6 +44,9 @@ variables:
       - name: TEST_NAMESPACE
         value: capitalbankofflinerepo-dev
 
+      # Single source of truth for the image tag used across build, verify, and deploy.
+      # Defaults to a unique build ID so every run produces a distinct tag and forces
+      # a real pod rollout. Set the imageTag parameter to override (e.g. for rollback).
       - name: RESOLVED_IMAGE_TAG
         value: $(Build.BuildId)
 
@@ -73,14 +76,14 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 echo "Getting AKS credentials..."
-                
+
                 az aks get-credentials \
                   --resource-group rg-eus2-dev-opensky \
                   --name aks-eus2-dev-opensky \
                   --overwrite-existing
-                
+
                 kubectl version --client
 
           # ------------------------------------------------------------------
@@ -94,7 +97,7 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 if kubectl get namespace $(TEST_NAMESPACE) > /dev/null 2>&1; then
                   echo "Namespace exists"
                 else
@@ -112,20 +115,22 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 chmod +x ./gradlew
                 ./gradlew buildOfflineRepo
-                
+
                 az acr login --name $(ACR_NAME)
-                
+
                 IMAGE="$(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):$(RESOLVED_IMAGE_TAG)"
-                
+
+                echo "Building image: $IMAGE"
+
                 docker build \
                   -f Dockerfile \
                   -t "$IMAGE" .
-                
+
                 docker push "$IMAGE"
-                
+
                 find build/offline-repo -maxdepth 3
 
           # ------------------------------------------------------------------
@@ -139,19 +144,23 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
+                echo "Checking ACR for tag: $(RESOLVED_IMAGE_TAG)"
+
                 IMAGE_EXISTS=$(
                   az acr repository show-tags \
                     --name $(ACR_NAME) \
                     --repository $(ACR_REPO_PATH) \
-                    --query "[?@=='${{ parameters.imageTag }}']" \
+                    --query "[?@=='$(RESOLVED_IMAGE_TAG)']" \
                     --output tsv 2>/dev/null || echo ""
                 )
-                
+
                 if [ -z "$IMAGE_EXISTS" ]; then
-                  echo "Tag not found"
+                  echo "Tag '$(RESOLVED_IMAGE_TAG)' NOT found in $(ACR_NAME)/$(ACR_REPO_PATH)"
                   exit 1
                 fi
+
+                echo "Image confirmed in ACR: $(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):$(RESOLVED_IMAGE_TAG)"
 
           # ------------------------------------------------------------------
           # STEP 5: Deploy via Kustomize
@@ -164,14 +173,16 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
+                echo "Deploying tag: $(RESOLVED_IMAGE_TAG)"
+
                 cd $(KUSTOMIZE_OVERLAY_PATH)
-                
+
                 kustomize edit set image \
-                  $(BASE_IMAGE_NAME)=$(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):${{ parameters.imageTag }}
-                
+                  $(BASE_IMAGE_NAME)=$(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):$(RESOLVED_IMAGE_TAG)
+
                 cat kustomization.yaml
-                
+
                 kustomize build . | \
                   kubectl apply \
                     -n $(TEST_NAMESPACE) \
@@ -188,7 +199,7 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 kubectl rollout status \
                   deployment/$(TEST_DEPLOYMENT_NAME) \
                   -n $(TEST_NAMESPACE) \
@@ -205,36 +216,36 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 echo "--- Deployment image reference ---"
-                
+
                 kubectl get deployment \
                   $(TEST_DEPLOYMENT_NAME) \
                   -n $(TEST_NAMESPACE) \
                   -o jsonpath="{.spec.template.spec.containers[*].image}"
-                
+
                 echo ""
                 echo "--- Pods ---"
-                
+
                 kubectl get pods \
                   -n $(TEST_NAMESPACE) \
                   -o wide
-                
+
                 echo ""
                 echo "--- Rollout Status ---"
-                
+
                 kubectl rollout status \
                   deployment/$(TEST_DEPLOYMENT_NAME) \
                   -n $(TEST_NAMESPACE) \
                   --timeout=60s || true
-                
+
                 echo ""
                 echo "--- Image Digests ---"
-                
+
                 kubectl get pods \
                   -n $(TEST_NAMESPACE) \
                   -o jsonpath="{range .items[*]}{.metadata.name}{'\t'}{.spec.containers[*].image}{'\t'}{.status.containerStatuses[*].imageID}{'\n'}{end}"
-                
+
                 POD_NAME=$(
                   kubectl get pods \
                     -n $(TEST_NAMESPACE) \
@@ -244,19 +255,19 @@ stages:
                     -n $(TEST_NAMESPACE) \
                     -o jsonpath="{.items[0].metadata.name}"
                 )
-                
+
                 if [ -z "$POD_NAME" ]; then
                   echo "No pod found"
                   exit 1
                 fi
-                
+
                 echo "Using pod: $POD_NAME"
-                
+
                 kubectl exec \
                   -n $(TEST_NAMESPACE) \
                   "$POD_NAME" \
                   -- \
-                  find /usr/share/nginx/html/org/sonarsource/gradle/sonarqube-gradle-plugin/5.1.0.4882/ \
+                  find /usr/share/nginx/html/org/sonarsource/scanner/gradle/sonarqube-gradle-plugin/5.1.0.4882/ \
                   -type f \
                   -exec ls -ln {} \;
 
@@ -271,22 +282,22 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -e
-                
+
                 echo "--- Services ---"
                 kubectl get svc -n $(TEST_NAMESPACE) -o wide
-                
+
                 echo ""
                 echo "--- Ingress ---"
                 kubectl get ingress -n $(TEST_NAMESPACE) -o wide || true
-                
+
                 echo ""
                 echo "--- Matching Services ---"
                 kubectl get svc --all-namespaces -o wide | grep -i offline || true
-                
+
                 echo ""
                 echo "--- Service Details ---"
                 kubectl describe svc -n $(TEST_NAMESPACE)
-                
+
                 echo ""
                 echo "--- LoadBalancer / Selector ---"
                 kubectl describe svc -n $(TEST_NAMESPACE) | \
