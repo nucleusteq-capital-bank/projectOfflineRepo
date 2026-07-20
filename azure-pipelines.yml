@@ -8,128 +8,286 @@ parameters:
     displayName: "Select Environment"
     type: string
     default: dev
-    values: [dev, qa, uat, prod]
+    values:
+      - dev
+
+  - name: imageTag
+    displayName: "Image Tag to Deploy"
+    type: string
+    default: latest
 
 variables:
-- ${{ if eq(parameters.environment, 'dev') }}:
-  - group: Opensky-Dev-VariableGroup
-  - name: AGENT_POOL
-    value: AKS-DEV-Opensky
-  - name: K8S_SERVICE_CONNECTION
-    value: serviceconnection-dev-opensky
+  - ${{ if eq(parameters.environment, 'dev') }}:
+      - group: Opensky-Dev-VariableGroup
 
-- ${{ if eq(parameters.environment, 'qa') }}:
-  - group: Opensky-QA-VariableGroup
-  - name: AGENT_POOL
-    value: AKS-QA-Opensky
-  - name: K8S_SERVICE_CONNECTION
-    value: serviceconnection-qa-opensky
+      - name: AGENT_POOL
+        value: AKS-DEV-Opensky
 
-- ${{ if eq(parameters.environment, 'uat') }}:
-  - group: Opensky-UAT-VariableGroup
-  - name: AGENT_POOL
-    value: AKS-UAT-Opensky
-  - name: K8S_SERVICE_CONNECTION
-    value: serviceconnection-uat-opensky
-  - name: KEYVAULT_NAME
-    value: kvault-cus-uat-opensky
+      - name: K8S_SERVICE_CONNECTION
+        value: serviceconnection-dev-opensky
 
-- ${{ if eq(parameters.environment, 'prod') }}:
-  - name: AGENT_POOL
-    value: AKS-PROD-Opensky
-  - name: K8S_SERVICE_CONNECTION
-    value: serviceconnection-prod-opensky
-  - name: KEYVAULT_NAME
-    value: kvault-cus-prod-opensky
+      - name: ACR_NAME
+        value: akseus2devopenskyregistry
 
-- name: IMAGE_NAME
-  value: offline-repo
-- name: ACR_REPO_PATH
-  value: base-images/offline-repo
+      - name: ACR_REPO_PATH
+        value: base-images/offline-repo
+
+      - name: BASE_IMAGE_NAME
+        value: akseus2devopenskyregistry.azurecr.io/base-images/offline-repo
+
+      - name: KUSTOMIZE_OVERLAY_PATH
+        value: k8s/overlays/dev
+
+      - name: TEST_DEPLOYMENT_NAME
+        value: offline-repo-backend-deployment
+
+      - name: TEST_NAMESPACE
+        value: capitalbankofflinerepo-dev
+
+      - name: RESOLVED_IMAGE_TAG
+        value: $(Build.BuildId)
 
 pool:
   name: $(AGENT_POOL)
 
-# ---------- BUILD STAGE ----------
 stages:
-- stage: Build
-  displayName: "Build and Push Docker Image"
-  jobs:
-  - job: BuildJob
-    displayName: BuildJob
-    steps:
-    - checkout: self
+  - stage: DeployOffline
+    displayName: "Deploy Offline Image to Offline Namespace"
 
-    # STEP 0: Clean Docker Disk Space
-    - script: |
-        echo "Cleaning Docker disk space..."
-        docker system prune -a -f || true
-      displayName: "Clean Docker Disk Space"
+    jobs:
+      - job: DeployOfflineJob
+        displayName: "Deploy to Offline Namespace via Kustomize"
 
-    # Load Key Vault secrets (UAT / PROD only)
-    - ${{ if or(eq(parameters.environment, 'uat'), eq(parameters.environment, 'prod')) }}:
-      - task: AzureKeyVault@2
-        displayName: Load KeyVault secrets (Build)
-        inputs:
-          azureSubscription: $(K8S_SERVICE_CONNECTION)
-          KeyVaultName: $(KEYVAULT_NAME)
-          SecretsFilter: |
-            ACR-NAME
-          RunAsPreJob: true
+        steps:
 
-    # STEP 1: Gradle build
-    - script: |
-        echo "Making gradlew executable..."
-        chmod +x gradlew
-        echo "Running Gradle buildOfflineRepo..."
-        ./gradlew buildOfflineRepo
-      displayName: "Gradle buildOfflineRepo"
+          - checkout: self
 
-    # STEP 2: Build Docker image
-    - script: |
-        echo "Building Docker image..."
-        docker build -f Dockerfile -t $(IMAGE_NAME) .
-      displayName: "Docker Build"
+          # ------------------------------------------------------------------
+          # STEP 1: Login to Azure & get AKS credentials
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Get AKS Credentials"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                echo "Getting AKS credentials..."
+                
+                az aks get-credentials \
+                  --resource-group rg-eus2-dev-opensky \
+                  --name aks-eus2-dev-opensky \
+                  --overwrite-existing
+                
+                kubectl version --client
 
-    # STEP 3: Run container
-    - script: |
-        echo "Starting container..."
-        docker run -d -p 8181:80 --name offline-repo $(IMAGE_NAME)
-      displayName: "Run Container"
+          # ------------------------------------------------------------------
+          # STEP 2: Ensure Offline namespace exists
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Create Offline Namespace (if not exists)"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                if kubectl get namespace $(TEST_NAMESPACE) > /dev/null 2>&1; then
+                  echo "Namespace exists"
+                else
+                  kubectl create namespace $(TEST_NAMESPACE)
+                fi
 
-    # STEP 3b: Verify container is running
-    - script: |
-        echo "Verifying container health..."
-        sleep 5
-        docker ps --filter "name=offline-repo"
-        curl -f http://localhost:8181 || echo "Warning: health check failed"
-      displayName: "Verify Container Health"
+          # ------------------------------------------------------------------
+          # STEP 3: Build and Push Image
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Run gradle buildOfflineRepo"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                chmod +x ./gradlew
+                ./gradlew buildOfflineRepo
+                
+                az acr login --name $(ACR_NAME)
+                
+                IMAGE="$(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):$(RESOLVED_IMAGE_TAG)"
+                
+                docker build \
+                  -f Dockerfile \
+                  -t "$IMAGE" .
+                
+                docker push "$IMAGE"
+                
+                find build/offline-repo -maxdepth 3
 
-    # STEP 4: Tag & Push to ACR
-    - task: AzureCLI@2
-      name: BuildImage
-      displayName: "Tag & Push Image to ACR"
-      inputs:
-        azureSubscription: $(K8S_SERVICE_CONNECTION)
-        scriptType: bash
-        scriptLocation: inlineScript
-        inlineScript: |
-          set -e
-          IMAGE_TAG="$(Build.SourceBranchName)-$(Build.BuildId)"
-          LOCAL_IMAGE="$(IMAGE_NAME)"
-          REMOTE_IMAGE="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):latest"
-          REMOTE_IMAGE_VERSIONED="$(ACR-NAME).azurecr.io/$(ACR_REPO_PATH):$IMAGE_TAG"
+          # ------------------------------------------------------------------
+          # STEP 4: Verify Image Tag Exists
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Verify Image Tag Exists in ACR"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                IMAGE_EXISTS=$(
+                  az acr repository show-tags \
+                    --name $(ACR_NAME) \
+                    --repository $(ACR_REPO_PATH) \
+                    --query "[?@=='${{ parameters.imageTag }}']" \
+                    --output tsv 2>/dev/null || echo ""
+                )
+                
+                if [ -z "$IMAGE_EXISTS" ]; then
+                  echo "Tag not found"
+                  exit 1
+                fi
 
-          echo "Generated IMAGE_TAG = $IMAGE_TAG"
-          echo "##vso[task.setvariable variable=IMAGE_TAG;isOutput=true]$IMAGE_TAG"
+          # ------------------------------------------------------------------
+          # STEP 5: Deploy via Kustomize
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Deploy via Kustomize Test Overlay"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                cd $(KUSTOMIZE_OVERLAY_PATH)
+                
+                kustomize edit set image \
+                  $(BASE_IMAGE_NAME)=$(ACR_NAME).azurecr.io/$(ACR_REPO_PATH):${{ parameters.imageTag }}
+                
+                cat kustomization.yaml
+                
+                kustomize build . | \
+                  kubectl apply \
+                    -n $(TEST_NAMESPACE) \
+                    -f -
 
-          echo "Tagging image..."
-          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
-          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE_VERSIONED"
+          # ------------------------------------------------------------------
+          # STEP 6: Wait for rollout
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Wait for Rollout"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                kubectl rollout status \
+                  deployment/$(TEST_DEPLOYMENT_NAME) \
+                  -n $(TEST_NAMESPACE) \
+                  --timeout=600s
 
-          echo "Logging into ACR..."
-          az acr login --name $(ACR-NAME)
+          # ------------------------------------------------------------------
+          # STEP 7: Diagnostic - Confirm image running
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Diagnostic -- Verify Deployed Image"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                echo "--- Deployment image reference ---"
+                
+                kubectl get deployment \
+                  $(TEST_DEPLOYMENT_NAME) \
+                  -n $(TEST_NAMESPACE) \
+                  -o jsonpath="{.spec.template.spec.containers[*].image}"
+                
+                echo ""
+                echo "--- Pods ---"
+                
+                kubectl get pods \
+                  -n $(TEST_NAMESPACE) \
+                  -o wide
+                
+                echo ""
+                echo "--- Rollout Status ---"
+                
+                kubectl rollout status \
+                  deployment/$(TEST_DEPLOYMENT_NAME) \
+                  -n $(TEST_NAMESPACE) \
+                  --timeout=60s || true
+                
+                echo ""
+                echo "--- Image Digests ---"
+                
+                kubectl get pods \
+                  -n $(TEST_NAMESPACE) \
+                  -o jsonpath="{range .items[*]}{.metadata.name}{'\t'}{.spec.containers[*].image}{'\t'}{.status.containerStatuses[*].imageID}{'\n'}{end}"
+                
+                POD_NAME=$(
+                  kubectl get pods \
+                    -n $(TEST_NAMESPACE) \
+                    -l app=offline-repo-backend \
+                    -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || \
+                  kubectl get pods \
+                    -n $(TEST_NAMESPACE) \
+                    -o jsonpath="{.items[0].metadata.name}"
+                )
+                
+                if [ -z "$POD_NAME" ]; then
+                  echo "No pod found"
+                  exit 1
+                fi
+                
+                echo "Using pod: $POD_NAME"
+                
+                kubectl exec \
+                  -n $(TEST_NAMESPACE) \
+                  "$POD_NAME" \
+                  -- \
+                  find /usr/share/nginx/html/org/sonarsource/gradle/sonarqube-gradle-plugin/5.1.0.4882/ \
+                  -type f \
+                  -exec ls -ln {} \;
 
-          echo "Pushing Docker image..."
-          docker push "$REMOTE_IMAGE"
-          docker push "$REMOTE_IMAGE_VERSIONED"
+          # ------------------------------------------------------------------
+          # STEP 7b: Diagnostic - External Endpoint
+          # ------------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: "Diagnostic -- Find External Endpoint"
+            inputs:
+              azureSubscription: $(K8S_SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                
+                echo "--- Services ---"
+                kubectl get svc -n $(TEST_NAMESPACE) -o wide
+                
+                echo ""
+                echo "--- Ingress ---"
+                kubectl get ingress -n $(TEST_NAMESPACE) -o wide || true
+                
+                echo ""
+                echo "--- Matching Services ---"
+                kubectl get svc --all-namespaces -o wide | grep -i offline || true
+                
+                echo ""
+                echo "--- Service Details ---"
+                kubectl describe svc -n $(TEST_NAMESPACE)
+                
+                echo ""
+                echo "--- LoadBalancer / Selector ---"
+                kubectl describe svc -n $(TEST_NAMESPACE) | \
+                  grep -A 5 -E "LoadBalancer Ingress|Selector" || true
